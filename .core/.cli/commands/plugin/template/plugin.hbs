@@ -1,0 +1,238 @@
+const chalk = require('chalk');
+const op = require('object-path');
+const { CloudRunOptions } = require(`${ACTINIUM_DIR}/lib/utils`);
+
+
+const PLUGIN = {
+    ID: '{{ID}}',
+    description: '{{description}}',
+    name: '{{name}}',
+    order: 100,
+    version: {
+        actinium: '{{{version.actinium}}}',
+        plugin: '{{{version.plugin}}}',
+    },
+    bundle: [],
+    meta: {
+        builtIn: {{builtIn}}
+    },
+};
+
+{{#if sdk}}
+/**
+ * ----------------------------------------------------------------------------
+ * Extend Actinium SDK
+ * ----------------------------------------------------------------------------
+ */
+const PLUGIN_SDK = require('./sdk');
+Actinium['{{sdk}}'] = op.get(Actinium, '{{sdk}}', PLUGIN_SDK);
+{{/if}}
+
+{{#if blueprints}}
+const PLUGIN_BLUEPRINTS = require('./blueprints');
+const registerBlueprints = (reg = true) => ({ ID }) => {
+    if (ID && ID !== PLUGIN.ID) return;
+    if (reg === true) PLUGIN_BLUEPRINTS.forEach(bp => Actinium.Blueprint.register(bp.ID, bp));
+    else PLUGIN_BLUEPRINTS.forEach(bp => Actinium.Blueprint.unregister(bp.ID));
+};
+
+// Start: Blueprints
+Actinium.Hook.register('start', registerBlueprints(true));
+
+// Activate: Blueprints
+Actinium.Hook.register('activate', registerBlueprints(true));
+
+// Deactivate: Blueprints
+Actinium.Hook.register('deactivate', registerBlueprints(false));
+{{/if}}
+
+/**
+ * ----------------------------------------------------------------------------
+ * Plugin registration
+ * ----------------------------------------------------------------------------
+ */
+Actinium.Plugin.register(PLUGIN, {{activate}});
+
+/**
+ * ----------------------------------------------------------------------------
+ * Hook registration
+ * ----------------------------------------------------------------------------
+ */
+
+{{#if routes}}
+const PLUGIN_ROUTES = require('./routes');
+const saveRoutes = async () => {
+    for (const route of PLUGIN_ROUTES) {
+        await Actinium.Route.save(route);
+    }
+};
+
+// Update routes on startup
+Actinium.Hook.register('start', async () => {
+    if (Actinium.Plugin.isActive(PLUGIN.ID)) {
+        await saveRoutes();
+    }
+});
+
+// Update routes on plugin activation
+Actinium.Hook.register('activate', async ({ID}) => {
+    if (ID === PLUGIN.ID) {
+        await saveRoutes();
+    }
+});
+
+// Update routes on plugin update
+Actinium.Hook.register('update', async ({ID}) => {
+    if (ID === PLUGIN.ID) {
+        await saveRoutes();
+    }
+});
+
+// Remove routes on deactivation
+Actinium.Hook.register('deactivate', async ({ID}) => {
+    if (ID === PLUGIN.ID) {
+        for (const route of PLUGIN_ROUTES) {
+            await Actinium.Route.delete(route);
+        }
+    }
+});
+{{/if}}
+
+{{#if collections}}
+Actinium.Hook.register('schema', async ({ ID }) => {
+    if (ID !== PLUGIN.ID) return;
+
+    const PLUGIN_SCHEMA = require('./schema');
+    PLUGIN_SCHEMA.forEach((item) => {
+        const { actions = {}, collection, schema = {} } = item;
+        if (!collection) return;
+
+        Actinium.Collection.register(collection, actions, schema);
+        Object.keys(actions).forEach(action => {
+            Actinium.Capability.register(`${collection}.${action}`);
+        });
+    });
+});
+{{/if}}
+
+Actinium.Hook.register('warning', () => {
+    if (!Actinium.Plugin.isActive(PLUGIN.ID)) return;
+
+    // Your bootstrap warning messages here
+    // WARN('');
+    // WARN(chalk.cyan.bold('Warning:'), 'about something');
+});
+
+Actinium.Hook.register('install', ({ ID }) => {
+    if (ID !== PLUGIN.ID) return;
+
+    // Your install code here
+});
+
+Actinium.Hook.register('uninstall', async ({ ID }) => {
+    if (ID !== PLUGIN.ID) return;
+
+    // Your uninstall code here
+});
+
+Actinium.Hook.register('activate', ({ ID }) => {
+    if (ID !== PLUGIN.ID) return;
+
+    // Your activation code here
+});
+
+{{#if cloud}}
+/**
+ * ----------------------------------------------------------------------------
+ * Cloud Functions
+ * ----------------------------------------------------------------------------
+ */
+
+{{#each cloud}}
+// {{this}}
+Actinium.Cloud.define(PLUGIN.ID, '{{this}}', req => {
+
+    // Your cloud function here
+
+    // -------------------------------------------------
+    // Example
+    // -------------------------------------------------
+    // const { params, user } = req;
+    // const options = CloudRunOptions(req);
+    // return Actinium.MySdk.get(params, user, options);
+});
+
+{{/each}}
+{{/if}}
+
+{{#if beforeSave}}
+/**
+ * ----------------------------------------------------------------------------
+ * beforeSave hooks
+ * ----------------------------------------------------------------------------
+ */
+
+{{#each beforeSave}}
+Actinium.Cloud.beforeSave('{{this.collection}}', async req => {
+    await Actinium.Hook.run('{{this.hook}}-save', req);
+});
+
+{{/each}}
+{{/if}}
+
+{{#if beforeDelete}}
+/**
+ * ----------------------------------------------------------------------------
+ * beforeDelete hooks
+ * ----------------------------------------------------------------------------
+ */
+
+{{#each beforeDelete}}
+Actinium.Cloud.beforeDelete('{{this.collection}}', async req => {
+    await Actinium.Hook.run('{{this.hook}}-delete', req);
+});
+{{/each}}
+{{/if}}
+
+{{#if afterSave}}
+/**
+ * ----------------------------------------------------------------------------
+ * afterSave hooks
+ * ----------------------------------------------------------------------------
+ */
+
+{{#each afterSave}}
+Actinium.Cloud.afterSave('{{this.collection}}', async req => {
+    await Actinium.Hook.run('{{this.hook}}-after-save', req);
+});
+{{/each}}
+{{/if}}
+
+{{#if afterDelete}}
+/**
+ * ----------------------------------------------------------------------------
+ * afterDelete hooks
+ * ----------------------------------------------------------------------------
+ */
+
+{{#each afterDelete}}
+Actinium.Cloud.afterDelete('{{this.collection}}', async req => {
+    await Actinium.Hook.run('{{this.hook}}-after-delete', req);
+});
+{{/each~}}
+{{/if}}
+
+{{#if afterFind}}
+/**
+ * ----------------------------------------------------------------------------
+ * afterFind hooks
+ * ----------------------------------------------------------------------------
+ */
+
+{{#each afterFind}}
+Actinium.Cloud.afterFind('{{this.collection}}', async req => {
+    await Actinium.Hook.run('{{this.hook}}-after-find', req);
+    return req.objects;
+});
+{{/each}}
+{{/if}}
