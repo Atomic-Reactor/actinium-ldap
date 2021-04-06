@@ -1,20 +1,19 @@
 const chalk = require('chalk');
 const op = require('object-path');
-const { CloudRunOptions } = require(`${ACTINIUM_DIR}/lib/utils`);
-
 
 const PLUGIN = {
     ID: 'Ldap',
-    description: 'Provides an LDAP server against Actinium user collection.',
+    description:
+        'Provides a simple LDAP server against Actinium user collection.',
     name: 'Ldap Plugin',
-    order: 100,
+    order: Actinium.Enums.priority.low,
     version: {
         actinium: '>=3.2.6',
         plugin: '0.0.1',
     },
     bundle: [],
     meta: {
-        builtIn: false
+        builtIn: false,
     },
 };
 
@@ -24,8 +23,7 @@ const PLUGIN = {
  * ----------------------------------------------------------------------------
  */
 const PLUGIN_SDK = require('./sdk');
-Actinium['Ldap'] = op.get(Actinium, 'Ldap', PLUGIN_SDK);
-
+Actinium.LDAP = op.get(Actinium, 'LDAP', PLUGIN_SDK);
 
 /**
  * ----------------------------------------------------------------------------
@@ -40,36 +38,30 @@ Actinium.Plugin.register(PLUGIN, false);
  * ----------------------------------------------------------------------------
  */
 
-
-
-Actinium.Hook.register('warning', () => {
-    if (!Actinium.Plugin.isActive(PLUGIN.ID)) return;
-
-    // Your bootstrap warning messages here
-    // WARN('');
-    // WARN(chalk.cyan.bold('Warning:'), 'about something');
+Actinium.Hook.register('plugin-load', plugin => {
+    if (PLUGIN.ID !== plugin.ID) return;
+    Actinium.LDAP.init();
 });
 
-Actinium.Hook.register('install', ({ ID }) => {
-    if (ID !== PLUGIN.ID) return;
-
-    // Your install code here
+Actinium.Hook.register('start', () => {
+    if (Actinium.Plugin.isActive(PLUGIN.ID)) {
+        Actinium.LDAP.start();
+    }
 });
 
-Actinium.Hook.register('uninstall', async ({ ID }) => {
-    if (ID !== PLUGIN.ID) return;
+Actinium.Hook.register('ldap-before-start', async server => {
+    // debug middleware
+    server.use(Actinium.LDAP.debugMiddleware);
 
-    // Your uninstall code here
+    // default bind (authentication, no authorization)
+    const anonBindDN = op.get(ENV, 'LDAP_ANONMOUS_BIND_DN', 'cn=default');
+    const baseDN = op.get(ENV, 'LDAP_USERS_BASE_DN', 'ou=users,dc=reactium,dc=io');
+    server.search(baseDN, Actinium.LDAP.searchUsers);
+    server.bind(anonBindDN, (req, res, next) => {
+        DEBUG(`Anonymous LDAP bind to ${anonBindDN}`);
+        res.end();
+        next();
+    });
+
+    server.bind(baseDN, Actinium.LDAP.bindUsers);
 });
-
-Actinium.Hook.register('activate', ({ ID }) => {
-    if (ID !== PLUGIN.ID) return;
-
-    // Your activation code here
-});
-
-
-
-
-
-

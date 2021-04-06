@@ -110,6 +110,7 @@ Actinium.start = options =>
                 ? http.createServer(Actinium.app)
                 : Actinium.server;
 
+            console.log('LISTENING ACTINIUM SERVER');
             Actinium.server.listen(PORT, async err => {
                 if (err) {
                     BOOT(err);
