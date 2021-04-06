@@ -4,55 +4,114 @@ const chalk = require('chalk');
 const op = require('object-path');
 const _ = require('underscore');
 
-let server;
-const LDAP = {
-    init() {
-        if (!server) {
-            const serverOptions = fs.existsSync(
-                '/etc/letsencrypt/live/auth.reactium.io/fullchain.pem',
-            )
-                ? {
-                    certificate: fs.readFileSync(
-                        '/etc/letsencrypt/live/auth.reactium.io/fullchain.pem',
-                    ),
-                    key: fs.readFileSync(
-                        '/etc/letsencrypt/live/auth.reactium.io/privkey.pem',
-                    ),
-                }
-                : {};
+let ldapServer;
+let ldapConfig;
 
-            server = ldap.createServer(serverOptions);
+const LDAP = {
+    config() {
+        if (ldapConfig) return ldapConfig;
+
+        ldapConfig.ldapPort = op.get(ENV, 'LDAP_PORT', 1389);
+
+        ldapConfig = op.get(ENV, 'LDAP_SERVER_OPTIONS', {});
+
+        // Default base distinguished name (i.e. location in tree to start)
+        ldapConfig.baseDN = op.get(
+            ENV,
+            'LDAP_USERS_BASE_DN',
+            op.get(ldapConfig, 'baseDN', 'ou=users,dc=reactium,dc=io'),
+        );
+
+        // A user that can be used for LDAP clients that insist on binding to something
+        ldapConfig.anonBindDN = op.get(
+            ENV,
+            'LDAP_ANONMOUS_BIND_DN',
+            op.get(ldapConfig, 'anonBindDN', 'cn=default'),
+        );
+
+        ldapConfig.rootBindUser = op.get(
+            ENV,
+            'LDAP_ROOT_BIND_USER',
+            op.get(ldapConfig, 'rootBindUser', 'root'),
+        );
+
+        ldapConfig.rootPasswordFile = op.get(
+            ENV,
+            'LDAP_ROOT_BIND_PASSWORD_FILE',
+        );
+
+        const serverOptions = {};
+        ldapConfig.serverOptions = serverOptions;
+
+        if (
+            ldapConfig.rootPasswordFile &&
+            fs.existsSync(ldapConfig.rootPasswordFile)
+        ) {
+            ldapConfig.rootPassword = String(
+                fs.readFileSync(ldapConfig.rootPasswordFile, 'utf8'),
+            ).trim();
+        }
+
+        ldapConfig.tls = false;
+        if (
+            ldapConfig.certFile &&
+            fs.existsSync(ldapConfig.certFile) &&
+            ldapConfig.keyFile &&
+            fs.existsSync(ldapConfig.keyFile)
+        ) {
+            ldapConfig.tls = true;
+            serverOptions.certificate = fs.readFileSync(
+                ldapConfig.certFile,
+                'utf8',
+            );
+            serverOptions.key = fs.readFileSync(ldapConfig.keyFile, 'utf8');
+        }
+
+        return ldapConfig;
+    },
+
+    init() {
+        const { serverOptions } = LDAP.config();
+        if (!ldapServer) {
+            ldapServer = ldap.createServer(serverOptions);
         }
     },
 
     async start() {
-        if (!server) {
+        const { ldapPort } = LDAP.config();
+
+        if (!ldapServer) {
             ERROR('No LDAP server object. Did you call Actinium.LDAP.init()?');
             return;
         }
 
-        await Actinium.Hook.run('ldap-before-start', server);
+        await Actinium.Hook.run('ldap-before-start', ldapServer);
 
-        server.listen(1389, function() {
-            BOOT(chalk.cyan('LDAP'), `Listening at ${server.url}`);
+        ldapServer.listen(ldapPort, function() {
+            BOOT(chalk.cyan('LDAP'), `Listening at ${ldapServer.url}`);
         });
 
-        await Actinium.Hook.run('ldap-started', server);
+        await Actinium.Hook.run('ldap-started', ldapServer);
     },
 
     async debugMiddleware(req, res, next) {
-        console.log('LDAP.debugMiddleware');
         INFO(typeof req);
-        // DEBUG(req);
+        DEBUG(req);
         next();
     },
 
+    async bindRoot(req, res, next) {
+        const { rootPassword } = LDAP.config();
+        if (!rootPassword || req.credentials !== rootPassword) {
+            return next(new ldap.InvalidCredentialsError());
+        }
+
+        res.end();
+        return next();
+    },
+
     async bindUsers(req, res, next) {
-        const baseDN = op.get(
-            ENV,
-            'LDAP_USERS_BASE_DN',
-            'ou=users,dc=reactium,dc=io',
-        );
+        const { baseDN } = LDAP.config();
 
         // shouldn't be possible but here to be extra
         if (!req.dn.childOf(baseDN)) {
@@ -154,13 +213,31 @@ const LDAP = {
     },
 
     async searchUsers(req, res, next) {
-        const baseDN = op.get(
-            ENV,
-            'LDAP_USERS_BASE_DN',
-            'ou=users,dc=reactium,dc=io',
-        );
-        const query = LDAP._buildQuery(req.filter);
+        const { baseDN, rootBindUser } = LDAP.config();
+        const filter = req.filter;
 
+        // Bailout for rootBindUser (don't try Parse)
+        if (
+            rootBindUser &&
+            filter.type === 'equal' &&
+            filter.attribute === 'uid' &&
+            filter.value === rootBindUser
+        ) {
+            const dn = `cn=${rootBindUser},${baseDN}`;
+            res.send({
+                dn,
+                attributes: {
+                    cn: rootBindUser,
+                    uid: rootBindUser,
+                    role: ['super-admin'],
+                },
+            });
+
+            res.end();
+            return next();
+        }
+
+        const query = LDAP._buildQuery(filter);
         if (query) {
             try {
                 const user = await query.first();
