@@ -2,6 +2,7 @@ const fs = require('fs');
 const ldap = require('ldapjs');
 const chalk = require('chalk');
 const op = require('object-path');
+const _ = require('underscore');
 
 let server;
 const LDAP = {
@@ -80,30 +81,58 @@ const LDAP = {
     },
 
     _buildQuery(filter, query, cn = '_User') {
-        console.log(filter.type, filter.attribute);
         let attribute = filter.attribute;
         if (cn === '_User' && attribute === 'uid') attribute = 'username';
 
         switch (filter.type) {
         case 'and': {
-            return new Parse.Query.and(
+            return Parse.Query.and(
                 ...filter.filters.map(filter =>
                     LDAP._buildQuery(filter, null, cn),
                 ),
             );
         }
 
-        case 'present':
+        case 'or': {
+            return Parse.Query.or(
+                ...filter.filters.map(filter =>
+                    LDAP._buildQuery(filter, null, cn),
+                ),
+            );
+        }
+
+        case 'present': {
+            query = new Parse.Query(cn);
+            query.exists(attribute);
+
+            return query;
+        }
+
         case 'substring': {
+            query = new Parse.Query(cn);
+            query.containsAllStartingWith(
+                attribute,
+                _.compact([filter.initial, ...filter.any, filter.final]),
+            );
+
+            return query;
+        }
+
+        case 'approx': {
             query = new Parse.Query(cn);
             query.contains(attribute, filter.value);
             return query;
         }
 
-        case 'approx':
         case 'equal': {
             query = new Parse.Query(cn);
             query.equalTo(attribute, filter.value);
+            return query;
+        }
+
+        case 'not': {
+            query = new Parse.Query(cn);
+            query.notEqualTo(attribute, filter.value);
             return query;
         }
 
@@ -125,23 +154,37 @@ const LDAP = {
     },
 
     async searchUsers(req, res, next) {
+        const baseDN = op.get(
+            ENV,
+            'LDAP_USERS_BASE_DN',
+            'ou=users,dc=reactium,dc=io',
+        );
         const query = LDAP._buildQuery(req.filter);
 
         if (query) {
             try {
                 const user = await query.first();
-                console.log({ user });
+                const obj = Actinium.Utils.serialize(user);
+                const dn = `cn=${obj.username},${baseDN}`;
+                const entry = {
+                    dn,
+                    attributes: {
+                        cn: obj.username,
+                        uid: obj.username,
+                        role: Object.keys(op.get(obj, 'roles', {})).filter(
+                            r => r !== 'anonymous',
+                        ),
+                        capability: op
+                            .get(obj, 'capabilities', [])
+                            .map(cap => cap.group),
+                    },
+                };
+
+                res.send(entry);
+                res.end();
+                return next();
             } catch (error) {}
         }
-
-        // if (req.filter.matches(entry.attributes)) {
-        //     console.log('searching users for this thingy');
-        //     res.send(entry);
-        //     res.end();
-        // } else {
-        //     console.log('filter', req.filter);
-        //     return next(new ldap.NoSuchObjectError());
-        // }
 
         res.end();
         return next();
