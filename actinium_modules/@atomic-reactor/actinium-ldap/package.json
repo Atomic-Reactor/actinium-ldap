@@ -1,6 +1,6 @@
 {
   "name": "@atomic-reactor/actinium-ldap",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "author": "Reactium LLC",
   "description": "Simple LDAP server as a plugin for Actinium",
   "dependencies": {

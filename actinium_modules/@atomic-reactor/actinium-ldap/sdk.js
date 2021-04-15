@@ -11,9 +11,9 @@ const LDAP = {
     config() {
         if (ldapConfig) return ldapConfig;
 
-        ldapConfig.ldapPort = op.get(ENV, 'LDAP_PORT', 1389);
-
         ldapConfig = op.get(ENV, 'LDAP_SERVER_OPTIONS', {});
+
+        ldapConfig.ldapPort = op.get(ENV, 'LDAP_PORT', 1389);
 
         // Default base distinguished name (i.e. location in tree to start)
         ldapConfig.baseDN = op.get(
